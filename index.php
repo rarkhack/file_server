@@ -161,8 +161,35 @@ if ($action !== '') {
             }
             $results[] = ['name' => $originalName, 'success' => true, 'message' => 'Saved to upload/' . $name, 'savedAs' => $name, 'size' => (int)($sizes[$i] ?? 0)];
         }
-        jsonResponse(['results' => $results]);
+        $successCount = count(array_filter($results, static fn(array $result): bool => $result['success']));
+        $status = $successCount === count($results) ? 200 : ($successCount > 0 ? 207 : 422);
+        jsonResponse(['results' => $results], $status);
     }
+
+    if ($action === 'upload-progress') {
+        if ($_SERVER['REQUEST_METHOD'] !== 'GET') jsonResponse(['error' => 'Use GET to read upload progress.'], 405);
+        if (filter_var(ini_get('session.upload_progress.enabled'), FILTER_VALIDATE_BOOLEAN) !== true) {
+            jsonResponse(['error' => 'PHP upload progress is disabled.'], 501);
+        }
+        $progressId = (string)($_GET['id'] ?? '');
+        if (preg_match('/\A[a-z0-9-]{1,64}\z/i', $progressId) !== 1) {
+            jsonResponse(['error' => 'Invalid upload progress ID.'], 400);
+        }
+        if (session_status() !== PHP_SESSION_ACTIVE && !session_start()) {
+            jsonResponse(['error' => 'Unable to start upload progress session.'], 500);
+        }
+        $prefix = ini_get('session.upload_progress.prefix');
+        $key = ($prefix === false ? '' : $prefix) . $progressId;
+        $progress = $_SESSION[$key] ?? null;
+        session_write_close();
+        jsonResponse([
+            'active' => is_array($progress),
+            'bytesProcessed' => is_array($progress) ? (int)($progress['bytes_processed'] ?? 0) : 0,
+            'contentLength' => is_array($progress) ? (int)($progress['content_length'] ?? 0) : 0,
+            'done' => is_array($progress) && !empty($progress['done'])
+        ]);
+    }
+
     jsonResponse(['error' => 'Unknown API action.'], 404);
 }
 if (isset($_GET['download'])) {
@@ -178,6 +205,11 @@ if (isset($_GET['download'])) {
         readfile($file); exit;
     } catch (Throwable $e) { http_response_code(400); exit('Invalid download path.'); }
 }
+if (session_status() !== PHP_SESSION_ACTIVE && !session_start()) {
+    http_response_code(500);
+    exit('Unable to start upload progress session.');
+}
+$uploadProgressName = (string)ini_get('session.upload_progress.name');
 ?>
 <!doctype html>
 <html lang="en">
@@ -190,7 +222,7 @@ if (isset($_GET['download'])) {
 <header class="topbar"><div><p class="eyebrow">LIGHTWEIGHT FILE SERVER</p><h1>File browser</h1><p class="subtitle">Browse and download files, or upload multiple files at once.</p></div><span class="server-pill"><span class="dot"></span> Local server</span></header>
 <section class="panel upload-panel">
 <div class="section-heading"><div><h2>Upload files</h2><p>Files are saved in the <code>upload/</code> directory.</p></div><span id="selection-count" class="muted">No files selected</span></div>
-<div id="drop-zone" class="drop-zone"><div class="upload-icon" aria-hidden="true">↑</div><strong>Drop files here</strong><span>or</span><label class="button primary" for="file-input">Choose files</label><input id="file-input" type="file" multiple hidden><small>New selections are added to the queue.</small></div>
+<div id="drop-zone" class="drop-zone"><div class="upload-icon" aria-hidden="true">↑</div><strong>Drop files here</strong><span>or</span><label class="button primary" for="file-input">Choose files</label><input id="file-input" type="file" multiple hidden><input id="upload-progress-field" type="hidden" name="<?= htmlspecialchars($uploadProgressName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>"><small>New selections are added to the queue.</small></div>
 <div id="upload-list" class="upload-list" aria-live="polite"></div>
 <div class="upload-actions"><button id="upload-button" class="button primary" disabled>Upload queued files</button><button id="clear-button" class="button secondary" disabled>Clear queue</button></div><p id="upload-note" class="notice" role="status"></p>
 </section>

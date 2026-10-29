@@ -5,6 +5,7 @@ const uploadButton = document.getElementById('upload-button');
 const clearButton = document.getElementById('clear-button');
 const selectionCount = document.getElementById('selection-count');
 const uploadNote = document.getElementById('upload-note');
+const uploadProgressField = document.getElementById('upload-progress-field');
 const fileList = document.getElementById('file-list');
 const breadcrumbs = document.getElementById('breadcrumbs');
 const fileError = document.getElementById('file-error');
@@ -70,8 +71,43 @@ function uploadOne(file, i) {
     return new Promise(resolve => {
         const xhr = new XMLHttpRequest();
         const form = new FormData();
+        const progressId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+        if (uploadProgressField?.name) form.append(uploadProgressField.name, progressId);
         form.append('files[]', file, file.name);
         xhr.open('POST', '?api=upload');
+        let polling = Boolean(uploadProgressField?.name);
+        let pollTimer = null;
+        let progressRequest = null;
+        let progressUnavailable = false;
+        const pollProgress = async () => {
+            if (!polling) return;
+            progressRequest = new AbortController();
+            try {
+                const response = await fetch(`?api=upload-progress&id=${encodeURIComponent(progressId)}`, {
+                    cache: 'no-store',
+                    signal: progressRequest.signal
+                });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const progress = await response.json();
+                if (progress.active && progress.contentLength > 0) {
+                    const received = Math.max(0, progress.bytesProcessed);
+                    const percent = Math.min(99, received / progress.contentLength * 100);
+                    const current = rowStates.get(fileKey(file))?.percent ?? 0;
+                    updateRow(i, Math.max(current, percent), `Server received ${formatSize(received)} of ${formatSize(progress.contentLength)}`, 'processing');
+                }
+            } catch (error) {
+                if (error.name !== 'AbortError' && !progressUnavailable) {
+                    progressUnavailable = true;
+                    polling = false;
+                    const current = rowStates.get(fileKey(file))?.percent ?? 0;
+                    updateRow(i, current, 'Server-side progress unavailable; showing browser transfer progress.', 'processing');
+                }
+            } finally {
+                progressRequest = null;
+                if (polling) pollTimer = setTimeout(pollProgress, 500);
+            }
+        };
+        if (polling) pollProgress();
         xhr.upload.addEventListener('progress', e => {
             if (!e.lengthComputable) return;
             const percent = e.total > 0 ? (e.loaded / e.total * 100) : 0;
@@ -99,6 +135,11 @@ function uploadOne(file, i) {
             }
         });
         xhr.addEventListener('error', () => { updateRow(i, 0, 'Network error. Check server and upload limits.', 'failure'); resolve(false); });
+        xhr.addEventListener('loadend', () => {
+            polling = false;
+            clearTimeout(pollTimer);
+            progressRequest?.abort();
+        });
         updateRow(i, 0, 'Starting upload…');
         xhr.send(form);
     });
