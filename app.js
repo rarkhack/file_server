@@ -9,12 +9,46 @@ const uploadProgressField = document.getElementById('upload-progress-field');
 const fileList = document.getElementById('file-list');
 const breadcrumbs = document.getElementById('breadcrumbs');
 const fileError = document.getElementById('file-error');
+const accountMenuToggle = document.getElementById('account-menu-toggle');
+const accountMenu = document.getElementById('account-menu');
+const passwordDialog = document.getElementById('password-dialog');
+const passwordDialogFeedback = passwordDialog?.querySelector('.error-message, .success-message');
 
 let selectedFiles = [];
 // Keep each row's progress/status when the queue is re-rendered after adding files.
 const rowStates = new Map();
 let currentPath = '';
 let uploading = false;
+
+accountMenuToggle?.addEventListener('click', () => {
+    const expanded = accountMenuToggle.getAttribute('aria-expanded') === 'true';
+    accountMenuToggle.setAttribute('aria-expanded', String(!expanded));
+    accountMenu.hidden = expanded;
+});
+document.addEventListener('click', event => {
+    if (accountMenu && !accountMenu.hidden && event.target instanceof Element && !event.target.closest('.account-menu')) {
+        accountMenu.hidden = true;
+        accountMenuToggle.setAttribute('aria-expanded', 'false');
+    }
+});
+document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && accountMenu && !accountMenu.hidden) {
+        accountMenu.hidden = true;
+        accountMenuToggle.setAttribute('aria-expanded', 'false');
+        accountMenuToggle.focus();
+    }
+});
+document.getElementById('open-password-dialog')?.addEventListener('click', () => {
+    accountMenu.hidden = true;
+    accountMenuToggle.setAttribute('aria-expanded', 'false');
+    passwordDialog?.showModal();
+    passwordDialog?.querySelector('#current-password')?.focus();
+});
+document.getElementById('close-password-dialog')?.addEventListener('click', () => passwordDialog?.close());
+if (passwordDialogFeedback && passwordDialog?.open) {
+    passwordDialog.removeAttribute('open');
+    passwordDialog.showModal();
+}
 
 function escapeHtml(value) {
     return String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
